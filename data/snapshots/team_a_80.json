@@ -1,0 +1,16 @@
+{
+  "fixture_id": 123456,
+  "minute": 80,
+  "home_team": "Team A",
+  "away_team": "Team B",
+  "home_score": 0,
+  "away_score": 1,
+  "home_shots": 17,
+  "away_shots": 6,
+  "home_shots_on_goal": 8,
+  "away_shots_on_goal": 2,
+  "home_corners": 10,
+  "away_corners": 2,
+  "home_xg": 2.03,
+  "away_xg": 0.66
+}
