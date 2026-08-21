@@ -1,41 +1,30 @@
 import json
+from pathlib import Path
+
+from analysis import calculate_diff
+
+from signals import (
+    detect_corner_signal,
+    detect_goal_signal,
+    detect_comeback_signal,
+)
 
 
+# ==========================================
+# JSON snapshotを読み込む
+# ==========================================
 def load_snapshot(filename):
     with open(filename, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-def calculate_diff(old, new):
-    return {
-        "minutes": new["minute"] - old["minute"],
-
-        "home_shots": new["home_shots"] - old["home_shots"],
-        "away_shots": new["away_shots"] - old["away_shots"],
-
-        "home_sog": (
-            new["home_shots_on_goal"]
-            - old["home_shots_on_goal"]
-        ),
-        "away_sog": (
-            new["away_shots_on_goal"]
-            - old["away_shots_on_goal"]
-        ),
-
-        "home_corners": new["home_corners"] - old["home_corners"],
-        "away_corners": new["away_corners"] - old["away_corners"],
-
-        "home_xg": new["home_xg"] - old["home_xg"],
-        "away_xg": new["away_xg"] - old["away_xg"],
-    }
-
-
 # ==========================================
-# 差分スタッツを見やすく表示する関数
+# 差分スタッツを見やすく表示
 # ==========================================
 def print_interval(title, diff):
     print()
     print(f"=== {title} ===")
+    print("Minutes:", diff["minutes"])
     print("Shots:", diff["home_shots"], "-", diff["away_shots"])
     print("Shots on Goal:", diff["home_sog"], "-", diff["away_sog"])
     print("Corners:", diff["home_corners"], "-", diff["away_corners"])
@@ -48,253 +37,130 @@ def print_interval(title, diff):
 
 
 # ==========================================
-# ここからJSONを読み込む
+# live snapshot一覧を取得
 # ==========================================
-snapshot_60 = load_snapshot("data/snapshots/team_a_60.json")
-snapshot_70 = load_snapshot("data/snapshots/team_a_70.json")
-snapshot_80 = load_snapshot("data/snapshots/team_a_80.json")
+folder = Path("data/live_snapshots")
 
+files = list(folder.glob("*.json"))
 
-diff_60_70 = calculate_diff(snapshot_60, snapshot_70)
-diff_70_80 = calculate_diff(snapshot_70, snapshot_80)
-diff_60_80 = calculate_diff(snapshot_60, snapshot_80)
+if not files:
+    print("ライブsnapshotがまだありません。")
+    raise SystemExit
+
 
 # ==========================================
-# 計算したスタッツを表示
+# fixture_idごとにまとめる
 # ==========================================
-print_interval("60 → 70", diff_60_70)
-print_interval("70 → 80", diff_70_80)
-print_interval("60 → 80", diff_60_80)
+matches = {}
+
+for file in files:
+    snapshot = load_snapshot(file)
+
+    fixture_id = snapshot["fixture_id"]
+
+    if fixture_id not in matches:
+        matches[fixture_id] = []
+
+    matches[fixture_id].append(snapshot)
 
 
+# ==========================================
+# 各試合をminute順に並べて分析
+# ==========================================
+for fixture_id, snapshots in matches.items():
 
+    snapshots.sort(key=lambda snapshot: snapshot["minute"])
 
-def detect_corner_signal(diff):
-    home_score = 0
-    away_score = 0
+    print()
+    print("=" * 50)
+    print("Fixture ID:", fixture_id)
+    print(
+        snapshots[0]["home_team"],
+        "vs",
+        snapshots[0]["away_team"]
+    )
 
-    if (
-        diff["home_shots"] >= 4
-        and diff["home_corners"] >= 2
-    ):
-        home_score += 1
+    # snapshotが1個しかない
+    if len(snapshots) < 2:
+        print("snapshotが1件だけなので、まだ差分分析できません。")
+        continue
 
-    if (
-        diff["home_sog"] >= 2
-        and diff["home_xg"] >= 0.4
-    ):
-        home_score += 1
+    # 最新2件
+    old = snapshots[-2]
+    new = snapshots[-1]
 
-    if (
-        diff["away_shots"] <= 1
-        and diff["away_corners"] == 0
-    ):
-        home_score += 1
+    diff_latest = calculate_diff(old, new)
 
-    if (
-        diff["away_shots"] >= 4
-        and diff["away_corners"] >= 2
-    ):
-        away_score += 1
+    title = f'{old["minute"]} → {new["minute"]}'
 
-    if (
-        diff["away_sog"] >= 2
-        and diff["away_xg"] >= 0.4
-    ):
-        away_score += 1
+    print_interval(title, diff_latest)
 
-    if (
-        diff["home_shots"] <= 1
-        and diff["home_corners"] == 0
-    ):
-        away_score += 1
+    # ======================================
+    # CORNER SIGNAL
+    # 最新区間だけでも判定できる
+    # ======================================
+    home_corner_score, away_corner_score = detect_corner_signal(
+        diff_latest
+    )
 
-    return home_score, away_score
+    print()
+    print("=== CORNER SIGNAL ===")
+    print("Home Corner Score:", home_corner_score)
+    print("Away Corner Score:", away_corner_score)
 
-def detect_corner_signal(diff):
-    home_score = 0
-    away_score = 0
+    if home_corner_score >= 2:
+        print("🚩 HOME CORNER SIGNAL")
 
-    if (
-        diff["home_shots"] >= 4
-        and diff["home_corners"] >= 2
-    ):
-        home_score += 1
+    if away_corner_score >= 2:
+        print("🚩 AWAY CORNER SIGNAL")
 
-    if (
-        diff["home_sog"] >= 2
-        and diff["home_xg"] >= 0.4
-    ):
-        home_score += 1
+    # ======================================
+    # snapshotが3件以上なら
+    # 2区間を使うGoal / Comebackも判定
+    # ======================================
+    if len(snapshots) >= 3:
 
-    if (
-        diff["away_shots"] <= 1
-        and diff["away_corners"] == 0
-    ):
-        home_score += 1
+        first = snapshots[-3]
+        middle = snapshots[-2]
+        last = snapshots[-1]
 
-    if (
-        diff["away_shots"] >= 4
-        and diff["away_corners"] >= 2
-    ):
-        away_score += 1
+        diff_first = calculate_diff(first, middle)
+        diff_second = calculate_diff(middle, last)
 
-    if (
-        diff["away_sog"] >= 2
-        and diff["away_xg"] >= 0.4
-    ):
-        away_score += 1
+        home_goal_score, away_goal_score = detect_goal_signal(
+            diff_first,
+            diff_second
+        )
 
-    if (
-        diff["home_shots"] <= 1
-        and diff["home_corners"] == 0
-    ):
-        away_score += 1
+        print()
+        print("=== GOAL SIGNAL ===")
+        print("Home Goal Score:", home_goal_score)
+        print("Away Goal Score:", away_goal_score)
 
-    return home_score, away_score
+        if home_goal_score >= 2:
+            print("🔥 HOME GOAL SIGNAL")
 
+        if away_goal_score >= 2:
+            print("🔥 AWAY GOAL SIGNAL")
 
-home_corner_score, away_corner_score = detect_corner_signal(diff_60_70)
+        home_comeback_score, away_comeback_score = detect_comeback_signal(
+            first,
+            last,
+            diff_first,
+            diff_second
+        )
 
-print()
-print("=== CORNER SIGNAL ===")
-print("Home Corner Score:", home_corner_score)
-print("Away Corner Score:", away_corner_score)
+        print()
+        print("=== COMEBACK SIGNAL ===")
+        print("Home Comeback Score:", home_comeback_score)
+        print("Away Comeback Score:", away_comeback_score)
 
-if home_corner_score >= 2:
-    print("🚩 HOME CORNER SIGNAL")
+        if home_comeback_score >= 2:
+            print("⚡ HOME COMEBACK SIGNAL")
 
-if away_corner_score >= 2:
-    print("🚩 AWAY CORNER SIGNAL")
+        if away_comeback_score >= 2:
+            print("⚡ AWAY COMEBACK SIGNAL")
 
-def detect_goal_signal(diff_60_70, diff_70_80):
-    home_score = 0
-    away_score = 0
-
-    # 60→70でホームが強く押している
-    if (
-        diff_60_70["home_shots"] >= 4
-        and diff_60_70["home_sog"] >= 2
-        and diff_60_70["home_xg"] >= 0.4
-    ):
-        home_score += 1
-
-    # 70→80でもホームの圧力が継続
-    if (
-        diff_70_80["home_shots"] >= 4
-        and diff_70_80["home_sog"] >= 2
-        and diff_70_80["home_xg"] >= 0.4
-    ):
-        home_score += 1
-
-    # 相手がほとんど攻撃できていない
-    if (
-        diff_60_70["away_shots"] <= 1
-        and diff_70_80["away_shots"] <= 1
-    ):
-        home_score += 1
-
-    # Away側も同じ考え方
-    if (
-        diff_60_70["away_shots"] >= 4
-        and diff_60_70["away_sog"] >= 2
-        and diff_60_70["away_xg"] >= 0.4
-    ):
-        away_score += 1
-
-    if (
-        diff_70_80["away_shots"] >= 4
-        and diff_70_80["away_sog"] >= 2
-        and diff_70_80["away_xg"] >= 0.4
-    ):
-        away_score += 1
-
-    if (
-        diff_60_70["home_shots"] <= 1
-        and diff_70_80["home_shots"] <= 1
-    ):
-        away_score += 1
-
-    return home_score, away_score
-
-
-home_goal_score, away_goal_score = detect_goal_signal(
-    diff_60_70,
-    diff_70_80
-)
-
-print()
-print("=== GOAL SIGNAL ===")
-print("Home Goal Score:", home_goal_score)
-print("Away Goal Score:", away_goal_score)
-
-if home_goal_score >= 2:
-    print("🔥 HOME GOAL SIGNAL")
-
-if away_goal_score >= 2:
-    print("🔥 AWAY GOAL SIGNAL")
-
-def detect_comeback_signal(snapshot_60, snapshot_80, diff_60_70, diff_70_80):
-    home_score = 0
-    away_score = 0
-
-    # 80分時点でホームが負けている
-    if snapshot_80["home_score"] < snapshot_80["away_score"]:
-        if (
-            diff_60_70["home_shots"] >= 4
-            and diff_60_70["home_sog"] >= 2
-        ):
-            home_score += 1
-
-        if (
-            diff_70_80["home_shots"] >= 4
-            and diff_70_80["home_sog"] >= 2
-        ):
-            home_score += 1
-
-        if (
-            diff_60_70["home_xg"] >= 0.4
-            and diff_70_80["home_xg"] >= 0.4
-        ):
-            home_score += 1
-
-    # 80分時点でAwayが負けている
-    if snapshot_80["away_score"] < snapshot_80["home_score"]:
-        if (
-            diff_60_70["away_shots"] >= 4
-            and diff_60_70["away_sog"] >= 2
-        ):
-            away_score += 1
-
-        if (
-            diff_70_80["away_shots"] >= 4
-            and diff_70_80["away_sog"] >= 2
-        ):
-            away_score += 1
-
-        if (
-            diff_60_70["away_xg"] >= 0.4
-            and diff_70_80["away_xg"] >= 0.4
-        ):
-            away_score += 1
-
-    return home_score, away_score
-
-
-home_comeback_score, away_comeback_score = detect_comeback_signal(
-    snapshot_60,
-    snapshot_80,
-    diff_60_70,
-    diff_70_80
-)
-
-print()
-print("=== COMEBACK SIGNAL ===")
-print("Home Comeback Score:", home_comeback_score)
-print("Away Comeback Score:", away_comeback_score)
-
-if home_comeback_score >= 2:
-    print("⚡ HOME COMEBACK SIGNAL")
-
-if away_comeback_score >= 2:
-    print("⚡ AWAY COMEBACK SIGNAL")
+    else:
+        print()
+        print("snapshotが2件なので、Goal / Comeback判定にはもう1件必要です。")
